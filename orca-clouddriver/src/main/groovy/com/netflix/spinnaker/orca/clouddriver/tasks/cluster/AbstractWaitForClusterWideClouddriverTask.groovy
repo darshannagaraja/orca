@@ -65,13 +65,11 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
       // Possible issue here for GCE if multiple server groups are named the same in
       // different zones but with the same region. However, this is not allowable by
       // Spinnaker constraints, so we're accepting the risk.
-      log.info "currentServerGroup.region: $it.region, currentServerGroup.name: $it.name"
-      log.info " deployServerGroup.region: $it.region,  deployServerGroup.name: $it.name"
       def isMatch = it.region == deployServerGroup.region && it.name == deployServerGroup.name
-      log.info "is match? $isMatch"
       isMatch
     })
-    log.info "Server groups matching $deployServerGroup : $matchingServerGroups"
+
+    log.info("${this.getClass().getSimpleName()}: Server groups matching $deployServerGroup : $matchingServerGroups")
     isServerGroupOperationInProgress(stage, interestingHealthProviderNames, matchingServerGroups)
   }
 
@@ -84,6 +82,11 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
   static class DeployServerGroup {
     String region
     String name
+
+    @Override
+    String toString() {
+      return "${region}->${name}"
+    }
   }
 
   static class RemainingDeployServerGroups {
@@ -113,8 +116,7 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
     }
 
     def serverGroups = cluster.get().serverGroups.collect { new TargetServerGroup(it) }
-    log.info "Pipeline ${stage.execution?.id} found server groups ${serverGroups.collect { it.region + "->" + it.name }}"
-    log.info "Pipeline ${stage.execution?.id} is looking for ${remainingDeployServerGroups.collect { it.region + "->" + it.name }}"
+    log.info "Pipeline ${stage.execution?.id}:${this.getClass().getSimpleName()} looking for server groups: $remainingDeployServerGroups found: $serverGroups"
 
     if (!serverGroups) {
       return emptyClusterResult(stage, clusterSelection, cluster.get())
@@ -124,11 +126,11 @@ abstract class AbstractWaitForClusterWideClouddriverTask extends AbstractCloudPr
     List<DeployServerGroup> stillRemaining = remainingDeployServerGroups.findAll(this.&isServerGroupOperationInProgress.curry(stage, serverGroups, healthProviderTypesToCheck))
 
     if (stillRemaining) {
-      log.info "Pipeline ${stage.execution?.id} still has ${stillRemaining.collect { it.region + "->" + it.name }}"
-      return new TaskResult(ExecutionStatus.RUNNING, [remainingDeployServerGroups: stillRemaining])
+      log.info "Pipeline ${stage.execution?.id}:${this.getClass().getSimpleName()} still has $stillRemaining"
+      return TaskResult.builder(ExecutionStatus.RUNNING).context([remainingDeployServerGroups: stillRemaining]).build()
     }
 
-    log.info "Pipeline ${stage.execution?.id} no server groups remain"
+    log.info "Pipeline ${stage.execution?.id}:${this.getClass().getSimpleName()} no server groups remain"
     return TaskResult.SUCCEEDED
   }
 }

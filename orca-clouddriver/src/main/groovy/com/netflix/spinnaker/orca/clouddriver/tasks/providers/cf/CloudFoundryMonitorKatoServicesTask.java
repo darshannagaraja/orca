@@ -92,7 +92,7 @@ public class CloudFoundryMonitorKatoServicesTask extends AbstractCloudProviderAw
       }
       case SUCCEEDED: {
         builder
-          .put("service.region", stageContext.get("region").toString())
+          .put("service.region", Optional.ofNullable(stageContext.get("region")).orElse(""))
           .put("service.account", getCredentials(stage))
           .put("service.operation.type", results.get(0).get("type"))
           .put("service.instance.name", results.get(0).get("serviceInstanceName"));
@@ -107,7 +107,7 @@ public class CloudFoundryMonitorKatoServicesTask extends AbstractCloudProviderAw
     katoTasks.add(katoTaskMapBuilder.build());
     builder.put("kato.tasks", katoTasks);
 
-    return new TaskResult(status, builder.build());
+    return TaskResult.builder(status).context(builder.build()).build();
   }
 
   private static ExecutionStatus katoStatusToTaskStatus(Task katoTask) {

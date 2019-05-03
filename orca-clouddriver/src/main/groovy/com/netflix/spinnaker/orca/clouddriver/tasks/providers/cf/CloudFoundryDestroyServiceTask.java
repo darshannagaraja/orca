@@ -16,42 +16,17 @@
 
 package com.netflix.spinnaker.orca.clouddriver.tasks.providers.cf;
 
-import com.google.common.collect.ImmutableMap;
-import com.netflix.spinnaker.orca.ExecutionStatus;
-import com.netflix.spinnaker.orca.TaskResult;
 import com.netflix.spinnaker.orca.clouddriver.KatoService;
-import com.netflix.spinnaker.orca.clouddriver.model.TaskId;
-import com.netflix.spinnaker.orca.clouddriver.tasks.AbstractCloudProviderAwareTask;
-import com.netflix.spinnaker.orca.pipeline.model.Stage;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.Nonnull;
-import java.util.Collections;
-import java.util.Map;
-
 @Component
-public class CloudFoundryDestroyServiceTask extends AbstractCloudProviderAwareTask {
-  private KatoService kato;
-
+public class CloudFoundryDestroyServiceTask extends AbstractCloudFoundryServiceTask {
   public CloudFoundryDestroyServiceTask(KatoService kato) {
-    this.kato = kato;
+    super(kato);
   }
 
-  @Nonnull
   @Override
-  public TaskResult execute(@Nonnull Stage stage) {
-    String cloudProvider = getCloudProvider(stage);
-    String account = getCredentials(stage);
-    Map<String, Map> operation = new ImmutableMap.Builder<String, Map>()
-      .put("destroyService", stage.getContext())
-      .build();
-    TaskId taskId = kato.requestOperations(cloudProvider, Collections.singletonList(operation)).toBlocking().first();
-    Map<String, Object> outputs = new ImmutableMap.Builder<String, Object>()
-      .put("notification.type", "destroyService")
-      .put("kato.last.task.id", taskId)
-      .put("service.region",  stage.getContext().get("region"))
-      .put("service.account", account)
-      .build();
-    return new TaskResult(ExecutionStatus.SUCCEEDED, outputs);
+  protected String getNotificationType() {
+    return "destroyService";
   }
 }
