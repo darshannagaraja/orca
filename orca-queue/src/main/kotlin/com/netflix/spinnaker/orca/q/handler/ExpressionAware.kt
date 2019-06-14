@@ -38,7 +38,7 @@ interface ExpressionAware {
   val contextParameterProcessor: ContextParameterProcessor
 
   companion object {
-    val mapper: ObjectMapper = OrcaObjectMapper.newInstance()
+    val mapper: ObjectMapper = OrcaObjectMapper.getInstance()
   }
 
   val log: Logger
@@ -114,8 +114,8 @@ interface ExpressionAware {
     ((this.context[PipelineExpressionEvaluator.SUMMARY] as Map<*, *>).size > 0)
 
   fun Stage.shouldFailOnFailedExpressionEvaluation(): Boolean {
-    return this.hasFailedExpressions() && this.context.containsKey("failOnFailedExpressions")
-      && this.context["failOnFailedExpressions"] as Boolean
+    return this.hasFailedExpressions() && this.context.containsKey("failOnFailedExpressions") &&
+      this.context["failOnFailedExpressions"] as Boolean
   }
 
   private fun mergedExceptionErrors(exception: Map<*, *>?, errors: List<String>): Map<*, *> =
@@ -147,7 +147,6 @@ interface ExpressionAware {
       this
     }
 
-  private operator fun StageContext.plus(map: Map<String, Any?>): StageContext
-    = StageContext(this).apply { putAll(map) }
-
+  private operator fun StageContext.plus(map: Map<String, Any?>): StageContext =
+    StageContext(this).apply { putAll(map) }
 }

@@ -29,10 +29,10 @@ import spock.lang.AutoCleanup
 import spock.lang.Shared
 import spock.lang.Unroll
 
-import static com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.*
-import static com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionCriteria
-
 import static com.netflix.spinnaker.orca.pipeline.model.Execution.ExecutionType.PIPELINE
+import static com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.BUILD_TIME_ASC
+import static com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.BUILD_TIME_DESC
+import static com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionCriteria
 import static com.netflix.spinnaker.orca.sql.SqlTestUtil.*
 import static com.netflix.spinnaker.orca.test.model.ExecutionBuilder.orchestration
 import static com.netflix.spinnaker.orca.test.model.ExecutionBuilder.pipeline
@@ -67,12 +67,12 @@ class SqlExecutionRepositorySpec extends ExecutionRepositoryTck<SqlExecutionRepo
 
   @Override
   SqlExecutionRepository createExecutionRepository() {
-    new SqlExecutionRepository("test", currentDatabase.context, mapper, new TransactionRetryProperties(), 10)
+    new SqlExecutionRepository("test", currentDatabase.context, mapper, new TransactionRetryProperties(), 10, 100)
   }
 
   @Override
   SqlExecutionRepository createExecutionRepositoryPrevious() {
-    new SqlExecutionRepository("test", previousDatabase.context, mapper, new TransactionRetryProperties(), 10)
+    new SqlExecutionRepository("test", previousDatabase.context, mapper, new TransactionRetryProperties(), 10, 100)
   }
 
   def "can store a new pipeline"() {

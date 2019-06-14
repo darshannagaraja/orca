@@ -19,7 +19,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.netflix.spinnaker.config.TransactionRetryProperties
 import com.netflix.spinnaker.kork.core.RetrySupport
 import com.netflix.spinnaker.orca.ExecutionStatus
-import com.netflix.spinnaker.orca.ExecutionStatus.*
+import com.netflix.spinnaker.orca.ExecutionStatus.BUFFERED
+import com.netflix.spinnaker.orca.ExecutionStatus.CANCELED
+import com.netflix.spinnaker.orca.ExecutionStatus.NOT_STARTED
+import com.netflix.spinnaker.orca.ExecutionStatus.PAUSED
+import com.netflix.spinnaker.orca.ExecutionStatus.RUNNING
 import com.netflix.spinnaker.orca.pipeline.model.Execution
 import com.netflix.spinnaker.orca.pipeline.model.Execution.ExecutionType
 import com.netflix.spinnaker.orca.pipeline.model.Execution.ExecutionType.ORCHESTRATION
@@ -29,15 +33,28 @@ import com.netflix.spinnaker.orca.pipeline.model.Stage
 import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionNotFoundException
 import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository
 import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator
-import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.*
+import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.BUILD_TIME_DESC
+import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.NATURAL_ASC
+import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionComparator.START_TIME_OR_ID
 import com.netflix.spinnaker.orca.pipeline.persistence.ExecutionRepository.ExecutionCriteria
 import com.netflix.spinnaker.orca.pipeline.persistence.UnpausablePipelineException
 import com.netflix.spinnaker.orca.pipeline.persistence.UnresumablePipelineException
 import de.huxhorn.sulky.ulid.SpinULID
-import org.jooq.*
+import org.jooq.DSLContext
+import org.jooq.Field
+import org.jooq.Record
+import org.jooq.SelectConditionStep
+import org.jooq.SelectConnectByStep
+import org.jooq.SelectForUpdateStep
+import org.jooq.SelectJoinStep
+import org.jooq.SelectWhereStep
+import org.jooq.Table
 import org.jooq.exception.SQLDialectNotSupportedException
 import org.jooq.impl.DSL
-import org.jooq.impl.DSL.*
+import org.jooq.impl.DSL.count
+import org.jooq.impl.DSL.field
+import org.jooq.impl.DSL.name
+import org.jooq.impl.DSL.table
 import org.slf4j.LoggerFactory
 import rx.Observable
 import java.lang.System.currentTimeMillis
@@ -54,7 +71,8 @@ class SqlExecutionRepository(
   private val jooq: DSLContext,
   private val mapper: ObjectMapper,
   private val transactionRetryProperties: TransactionRetryProperties,
-  private val batchReadSize: Int = 10
+  private val batchReadSize: Int = 10,
+  private val stageReadSize: Int = 200
 ) : ExecutionRepository, ExecutionStatisticsRepository {
   companion object {
     val ulid = SpinULID(SecureRandom())
@@ -175,11 +193,26 @@ class SqlExecutionRepository(
   }
 
   override fun delete(type: ExecutionType, id: String) {
+    val correlationField = if (type == PIPELINE) "pipeline_id" else "orchestration_id"
+    val (ulid, _) = mapLegacyId(jooq, type.tableName, id)
+
+    val correlationId = jooq.select(field("id")).from("correlation_ids")
+      .where(field(correlationField).eq(ulid))
+      .limit(1)
+      .fetchOne()
+      ?.into(String::class.java)
+    val stageIds = jooq.select(field("id")).from(type.stagesTableName)
+      .where(field("execution_id").eq(ulid))
+      .fetch()
+      ?.into(String::class.java)?.toTypedArray()
+
     jooq.transactional {
-      val correlationField = if (type == PIPELINE) "pipeline_id" else "orchestration_id"
-      val (ulid, _) = mapLegacyId(it, type.tableName, id)
-      it.delete(table("correlation_ids")).where(field(correlationField).eq(ulid)).execute()
-      it.delete(type.stagesTableName).where(field("execution_id").eq(ulid)).execute()
+      if (correlationId != null) {
+        it.delete(table("correlation_ids")).where(field("id").eq(correlationId)).execute()
+      }
+      if (stageIds != null) {
+        it.delete(type.stagesTableName).where(field("id").`in`(*stageIds)).execute()
+      }
       it.delete(type.tableName).where(field("id").eq(ulid)).execute()
     }
   }
@@ -235,16 +268,35 @@ class SqlExecutionRepository(
     pipelineConfigId: String,
     criteria: ExecutionCriteria
   ): Observable<Execution> {
-    val select = jooq.selectExecutions(
-      PIPELINE,
-      conditions = {
-        it.where(field("config_id").eq(pipelineConfigId))
-          .statusIn(criteria.statuses)
-      },
-      seek = {
-        it.orderBy(field("id").desc()).limit(criteria.pageSize)
-      }
-    )
+    // When not filtering by status, provide an index hint to ensure use of `pipeline_config_id_idx` which
+    // fully satisfies the where clause and order by. Without, some lookups by config_id matching thousands
+    // of executions triggered costly full table scans.
+    val select = if (criteria.statuses.isEmpty() || criteria.statuses.size == ExecutionStatus.values().size) {
+      jooq.selectExecutions(
+        PIPELINE,
+        usingIndex = "pipeline_config_id_idx",
+        conditions = {
+          it.where(field("config_id").eq(pipelineConfigId))
+            .statusIn(criteria.statuses)
+        },
+        seek = {
+          it.orderBy(field("id").desc()).limit(criteria.pageSize)
+        }
+      )
+    } else {
+      // When filtering by status, the above index hint isn't ideal. In this case, `pipeline_config_status_idx`
+      // appears to be used reliably without hinting.
+      jooq.selectExecutions(
+        PIPELINE,
+        conditions = {
+          it.where(field("config_id").eq(pipelineConfigId))
+            .statusIn(criteria.statuses)
+        },
+        seek = {
+          it.orderBy(field("id").desc()).limit(criteria.pageSize)
+        }
+      )
+    }
 
     return Observable.from(select.fetchExecutions())
   }
@@ -342,7 +394,6 @@ class SqlExecutionRepository(
     }
 
     throw ExecutionNotFoundException("No Pipeline found for correlation ID $correlationId")
-
   }
 
   override fun retrieveBufferedExecutions(): MutableList<Execution> =
@@ -501,10 +552,12 @@ class SqlExecutionRepository(
    * - When id is not a ULID but exists in the table, fetches ulid and returns: [fetched_ulid, id]
    * - When id is not a ULID and does not exist, creates new_ulid and returns: [new_ulid, id]
    */
-  private fun mapLegacyId(ctx: DSLContext,
-                          table: Table<Record>,
-                          id: String,
-                          timestamp: Long? = null): Pair<String, String?> {
+  private fun mapLegacyId(
+    ctx: DSLContext,
+    table: Table<Record>,
+    id: String,
+    timestamp: Long? = null
+  ): Pair<String, String?> {
     if (isULID(id)) return Pair(id, null)
 
     val ts = (timestamp ?: System.currentTimeMillis())
@@ -643,11 +696,13 @@ class SqlExecutionRepository(
     }
   }
 
-  private fun upsert(ctx: DSLContext,
-                     table: Table<Record>,
-                     insertPairs: Map<Field<Any?>, Any?>,
-                     updatePairs: Map<Field<Any>, Any?>,
-                     updateId: String) {
+  private fun upsert(
+    ctx: DSLContext,
+    table: Table<Record>,
+    insertPairs: Map<Field<Any?>, Any?>,
+    updatePairs: Map<Field<Any>, Any?>,
+    updateId: String
+  ) {
     // MySQL & PG support upsert concepts. A nice little efficiency here, we
     // can avoid a network call if the dialect supports it, otherwise we need
     // to do a select for update first.
@@ -692,10 +747,12 @@ class SqlExecutionRepository(
     }
   }
 
-  private fun selectExecution(ctx: DSLContext,
-                              type: ExecutionType,
-                              id: String,
-                              forUpdate: Boolean = false): Execution? {
+  private fun selectExecution(
+    ctx: DSLContext,
+    type: ExecutionType,
+    id: String,
+    forUpdate: Boolean = false
+  ): Execution? {
     val select = ctx.selectExecution(type).where(id.toWhereCondition())
     if (forUpdate) {
       select.forUpdate()
@@ -742,12 +799,26 @@ class SqlExecutionRepository(
     }, transactionRetryProperties.maxRetries, transactionRetryProperties.backoffMs, false)
   }
 
-  private fun DSLContext.selectExecutions(type: ExecutionType,
-                                          fields: List<Field<Any>> = selectFields(),
-                                          conditions: (SelectJoinStep<Record>) -> SelectConnectByStep<out Record>,
-                                          seek: (SelectConnectByStep<out Record>) -> SelectForUpdateStep<out Record>) =
+  private fun DSLContext.selectExecutions(
+    type: ExecutionType,
+    fields: List<Field<Any>> = selectFields(),
+    conditions: (SelectJoinStep<Record>) -> SelectConnectByStep<out Record>,
+    seek: (SelectConnectByStep<out Record>) -> SelectForUpdateStep<out Record>
+  ) =
     select(fields)
       .from(type.tableName)
+      .let { conditions(it) }
+      .let { seek(it) }
+
+  private fun DSLContext.selectExecutions(
+    type: ExecutionType,
+    fields: List<Field<Any>> = selectFields(),
+    usingIndex: String,
+    conditions: (SelectJoinStep<Record>) -> SelectConnectByStep<out Record>,
+    seek: (SelectConnectByStep<out Record>) -> SelectForUpdateStep<out Record>
+  ) =
+    select(fields)
+      .from(type.tableName.forceIndex(usingIndex))
       .let { conditions(it) }
       .let { seek(it) }
 
@@ -759,7 +830,7 @@ class SqlExecutionRepository(
     listOf(field("id"), field("body"))
 
   private fun SelectForUpdateStep<out Record>.fetchExecutions() =
-    ExecutionMapper(mapper).map(fetch().intoResultSet(), jooq)
+    ExecutionMapper(mapper, stageReadSize).map(fetch().intoResultSet(), jooq)
 
   private fun SelectForUpdateStep<out Record>.fetchExecution() =
     fetchExecutions().firstOrNull()

@@ -32,8 +32,20 @@ import static com.netflix.spinnaker.orca.test.model.ExecutionBuilder.stage
 
 class ArtifactResolverSpec extends Specification {
   ObjectMapper objectMapper = new ObjectMapper()
+
+  def pipelineId = "abc"
+
+  def expectedExecutionCriteria = {
+    def criteria = new ExecutionRepository.ExecutionCriteria()
+    criteria.setPageSize(1)
+    return criteria
+  }()
+
   def executionRepository = Stub(ExecutionRepository) {
-    retrievePipelinesForPipelineConfigId(*_) >> Observable.empty();
+    // only a call to retrievePipelinesForPipelineConfigId() with these argument values is expected
+    retrievePipelinesForPipelineConfigId(pipelineId, expectedExecutionCriteria) >> Observable.empty();
+    // any other interaction is unexpected
+    0 * _
   }
 
   def makeArtifactResolver() {
@@ -242,7 +254,7 @@ class ArtifactResolverSpec extends Specification {
   def "should find a matching artifact for #expected"() {
     when:
     def artifactResolver = makeArtifactResolver()
-    def artifact = artifactResolver.resolveSingleArtifact(expected, existing, true)
+    def artifact = artifactResolver.resolveSingleArtifact(expected, existing, null, true)
 
     then:
     artifact == desired
@@ -258,7 +270,7 @@ class ArtifactResolverSpec extends Specification {
   def "should fail find a matching artifact for #expected"() {
     when:
     def artifactResolver = makeArtifactResolver()
-    def artifact = artifactResolver.resolveSingleArtifact(expected, existing, true)
+    def artifact = artifactResolver.resolveSingleArtifact(expected, existing, null, true)
 
     then:
     artifact == null

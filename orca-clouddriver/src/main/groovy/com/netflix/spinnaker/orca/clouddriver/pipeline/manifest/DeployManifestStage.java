@@ -44,12 +44,16 @@ public class DeployManifestStage implements StageDefinitionBuilder {
 
   @Override
   public void taskGraph(@Nonnull Stage stage, @Nonnull TaskNode.Builder builder) {
-    builder.withTask(DeployManifestTask.TASK_NAME, DeployManifestTask.class)
+    builder
+        .withTask(DeployManifestTask.TASK_NAME, DeployManifestTask.class)
         .withTask("monitorDeploy", MonitorKatoTask.class)
         .withTask(PromoteManifestKatoOutputsTask.TASK_NAME, PromoteManifestKatoOutputsTask.class)
         .withTask(ManifestForceCacheRefreshTask.TASK_NAME, ManifestForceCacheRefreshTask.class)
         .withTask(WaitForManifestStableTask.TASK_NAME, WaitForManifestStableTask.class)
         .withTask(CleanupArtifactsTask.TASK_NAME, CleanupArtifactsTask.class)
+        .withTask("monitorCleanup", MonitorKatoTask.class)
+        .withTask(PromoteManifestKatoOutputsTask.TASK_NAME, PromoteManifestKatoOutputsTask.class)
+        .withTask(ManifestForceCacheRefreshTask.TASK_NAME, ManifestForceCacheRefreshTask.class)
         .withTask(BindProducedArtifactsTask.TASK_NAME, BindProducedArtifactsTask.class);
   }
 
@@ -57,7 +61,8 @@ public class DeployManifestStage implements StageDefinitionBuilder {
     DeployManifestContext context = stage.mapTo(DeployManifestContext.class);
     TrafficManagement trafficManagement = context.getTrafficManagement();
     if (trafficManagement.isEnabled()) {
-      manifestStrategyStagesAdder.addAfterStages(trafficManagement.getOptions().getStrategy(), graph, context);
+      manifestStrategyStagesAdder.addAfterStages(
+          trafficManagement.getOptions().getStrategy(), graph, context);
     }
   }
 }

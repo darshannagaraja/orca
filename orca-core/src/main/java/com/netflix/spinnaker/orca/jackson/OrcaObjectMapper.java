@@ -15,19 +15,21 @@
  */
 package com.netflix.spinnaker.orca.jackson;
 
+import static com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL;
+import static com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
+import static com.fasterxml.jackson.databind.DeserializationFeature.READ_DATE_TIMESTAMPS_AS_NANOSECONDS;
+import static com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATE_TIMESTAMPS_AS_NANOSECONDS;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.guava.GuavaModule;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.module.kotlin.KotlinModule;
 
-import static com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL;
-import static com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES;
-import static com.fasterxml.jackson.databind.DeserializationFeature.READ_DATE_TIMESTAMPS_AS_NANOSECONDS;
-import static com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATE_TIMESTAMPS_AS_NANOSECONDS;
-
 public class OrcaObjectMapper {
   private OrcaObjectMapper() {}
+
+  private static final ObjectMapper INSTANCE = newInstance();
 
   public static ObjectMapper newInstance() {
     ObjectMapper instance = new ObjectMapper();
@@ -40,5 +42,16 @@ public class OrcaObjectMapper {
     instance.disable(FAIL_ON_UNKNOWN_PROPERTIES);
     instance.setSerializationInclusion(NON_NULL);
     return instance;
+  }
+
+  /**
+   * Return an ObjectMapper instance that can be reused. Do not change the configuration of this
+   * instance as it will be shared across the entire application, use {@link #newInstance()}
+   * instead.
+   *
+   * @return Reusable ObjectMapper instance
+   */
+  public static ObjectMapper getInstance() {
+    return INSTANCE;
   }
 }
